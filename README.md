@@ -2,38 +2,47 @@
 
 A Node.js REST API that accepts transaction webhooks, stores transactions in PostgreSQL, prevents duplicate transaction creation, and processes accepted transactions asynchronously using a background worker.
 
+## Live Deployment
+
+- **API Base URL:** https://transaction-webhook-api-uc8p.onrender.com
+- **Health Check:** https://transaction-webhook-api-uc8p.onrender.com/
+- **GitHub Repository:** https://github.com/Keerthi-Chiru/transaction-webhook-service
+- **API Hosting:** Render
+- **Background Worker:** Northflank
+- **Database:** Supabase PostgreSQL
+
 ## Features
 
-- **Webhook endpoint:** Accepts incoming transaction events and responds with HTTP `202 Accepted`.
-- **Durable persistence:** Stores transactions in PostgreSQL.
-- **Idempotency:** Uses `transaction_id` as a primary key to prevent duplicate transaction records.
+- **Webhook endpoint:** Accepts transaction events and responds with HTTP `202 Accepted`.
+- **Durable persistence:** Stores transaction records in PostgreSQL.
+- **Idempotency:** Uses `transaction_id` as the primary key to prevent duplicate records.
 - **Asynchronous processing:** A background worker simulates an external API call with a 30-second delay.
-- **Transaction status:** Supports retrieving transaction details and processing status.
+- **Transaction status:** Retrieves transaction details and processing status.
 - **Input validation:** Rejects invalid payloads and malformed JSON.
 - **Automated tests:** Uses Vitest and Supertest to test the API.
 
 ## Tech Stack
 
-- Node.js
+- Node.js 20+
 - Express.js
-- PostgreSQL
-- Supabase PostgreSQL
+- PostgreSQL and Supabase
 - `pg` for database access
 - Vitest and Supertest for testing
 - dotenv for environment configuration
-
-## Prerequisites
-
-- Node.js 20 or later
-- npm
-- A PostgreSQL database
 
 ## Getting Started
 
 ### 1. Clone the repository
 
 ```bash
-git clone <YOUR_GITHUB_REPOSITORY_URL>
+git clone git@github.com:Keerthi-Chiru/transaction-webhook-service.git
+cd transaction-webhook-service
+```
+
+Alternatively, clone using HTTPS:
+
+```bash
+git clone https://github.com/Keerthi-Chiru/transaction-webhook-service.git
 cd transaction-webhook-service
 ```
 
@@ -51,7 +60,7 @@ Create a `.env` file in the project root:
 DATABASE_URL=your_postgresql_connection_string
 ```
 
-Replace the placeholder with your PostgreSQL connection string. Do not commit `.env` or expose database credentials.
+Replace the placeholder with your PostgreSQL connection string. Never commit `.env` or expose database credentials.
 
 ### 4. Set up the database
 
@@ -85,9 +94,9 @@ ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMPTZ;
 npm start
 ```
 
-The API starts on port `3000`.
+The API listens on port `3000` locally, or the port provided by the hosting platform.
 
-For development, use:
+For development, if the configured script is available:
 
 ```bash
 npm run dev
@@ -95,21 +104,23 @@ npm run dev
 
 ### 6. Start the background worker
 
-In a separate terminal, from the project directory, run:
+In a separate terminal, run:
 
 ```bash
 node worker.js
 ```
 
-The worker polls PostgreSQL for pending transactions, simulates an external API call, and updates the transaction status.
+The worker polls PostgreSQL for transactions awaiting processing, simulates the external API call, and updates transaction status.
 
 Run the worker as a separate process from the API.
 
 ## API Endpoints
 
-### Health Check
+### 1. Health Check
 
 `GET /`
+
+**Live endpoint:** https://transaction-webhook-api-uc8p.onrender.com/
 
 Returns the service health status and current timestamp.
 
@@ -122,9 +133,11 @@ Example response:
 }
 ```
 
-### Accept a Transaction Webhook
+### 2. Accept a Transaction Webhook
 
 `POST /v1/webhooks/transactions`
+
+**Live endpoint:** `https://transaction-webhook-api-uc8p.onrender.com/v1/webhooks/transactions`
 
 Example request:
 
@@ -138,9 +151,7 @@ Example request:
 }
 ```
 
-A successfully accepted transaction returns HTTP `202 Accepted`.
-
-Example response:
+Example successful response (`202 Accepted`):
 
 ```json
 {
@@ -152,17 +163,32 @@ Example response:
 
 Repeated submissions with the same transaction ID do not create additional records.
 
-### Retrieve a Transaction
+Example curl command:
+
+```bash
+curl -i -X POST \
+  "https://transaction-webhook-api-uc8p.onrender.com/v1/webhooks/transactions" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "transaction_id": "TXN_1001",
+    "source_account": "ACC001",
+    "destination_account": "ACC002",
+    "amount": 250.00,
+    "currency": "INR"
+  }'
+```
+
+### 3. Retrieve a Transaction
 
 `GET /v1/transactions/:transaction_id`
 
-Example:
+**Live endpoint example:**
 
 ```bash
-curl http://localhost:3000/v1/transactions/TXN_1001
+curl "https://transaction-webhook-api-uc8p.onrender.com/v1/transactions/TXN_1001"
 ```
 
-The response includes the transaction details, status, creation timestamp, and processing timestamp.
+The response includes transaction details, status, creation timestamp, and processing timestamp.
 
 Possible statuses:
 
@@ -179,36 +205,54 @@ Run the automated test suite:
 npm test
 ```
 
-The tests cover the health endpoint, input validation, duplicate webhooks, malformed JSON, invalid amounts, unknown transaction IDs, and retrieval of existing transactions.
+The current test suite contains seven tests covering:
 
-The current test suite contains seven passing tests.
+- Health endpoint and timestamp.
+- Missing transaction ID.
+- Duplicate webhook submissions.
+- Malformed JSON.
+- Invalid transaction amounts.
+- Unknown transaction IDs.
+- Retrieval of existing transactions.
+
+The seven tests passed in the latest reported test run.
 
 ## Architecture
+
+The service consists of three components:
+
+1. **API service — Render:** Receives webhook requests, validates payloads, persists transactions, and responds with HTTP `202 Accepted`.
+2. **Database — Supabase PostgreSQL:** Stores transaction data and processing state.
+3. **Background worker — Northflank:** Polls for transactions awaiting processing, simulates a 30-second external API operation, and updates the transaction status.
+
+### Processing Flow
 
 1. The API receives a transaction webhook.
 2. The request payload is validated.
 3. The transaction is inserted into PostgreSQL with status `PROCESSING`.
 4. The API responds with HTTP `202 Accepted`.
-5. The background worker claims a pending transaction.
+5. The worker claims a transaction for processing.
 6. The worker simulates an external API call lasting approximately 30 seconds.
-7. The transaction is updated to `PROCESSED`.
-8. Clients can retrieve the latest status through the transaction lookup endpoint.
+7. The worker updates the transaction status to `PROCESSED`.
+8. Clients retrieve the latest status through the transaction lookup endpoint.
 
 ## Design Decisions
 
-**Database-backed idempotency:** The transaction ID is the primary key, and inserts use PostgreSQL conflict handling to prevent duplicate records.
+**Database-backed idempotency:** The transaction ID is the primary key, and PostgreSQL conflict handling prevents duplicate transaction records.
 
-**Asynchronous processing:** The webhook handler does not wait for the simulated 30-second external API operation to finish.
+**Asynchronous processing:** The webhook handler does not wait for the simulated 30-second operation to complete.
 
-**Persistent processing state:** Transaction records and processing status are stored in PostgreSQL rather than only in application memory.
+**Persistent processing state:** Transaction records and their processing status are stored in PostgreSQL rather than only in application memory.
+
+**Separate worker process:** Background processing is independent of the API request lifecycle.
 
 ## Limitations and Future Improvements
 
-- Concurrent webhook requests have not consistently met the assessment's 500 ms response-time target in local testing.
-- The worker uses polling and a processing-claim timeout; stronger worker ownership, lease handling, and retry policies would improve recovery and reliability.
-- Production deployment should use managed process supervision, appropriate database connection limits, structured logging, monitoring, and graceful shutdown.
-- Additional integration tests should cover concurrent duplicate requests, worker recovery, and successful processing through to `PROCESSED`.
+- Concurrent webhook requests did not consistently meet the assessment's 500 ms response-time target in local testing.
+- The worker uses polling and a processing-claim timeout. Stronger lease handling, retry policies, and dead-letter handling would improve recovery and reliability.
+- Production hardening could include structured logging, monitoring, graceful shutdown, and database connection-limit tuning.
+- Additional integration tests could cover concurrent duplicate requests, worker recovery, and end-to-end processing through to `PROCESSED`.
 
 ## License
 
-Add a license if you intend to distribute this project publicly.
+No license has been specified. Add a license if you intend to distribute this project under explicit reuse terms.
